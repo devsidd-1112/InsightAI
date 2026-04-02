@@ -12,7 +12,7 @@ export default function ProfilePage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
-  
+
   const [formData, setFormData] = useState({
     fullName: '',
     email: '',
@@ -21,8 +21,26 @@ export default function ProfilePage() {
     confirmPassword: ''
   });
 
+  const [meetingsCount, setMeetingsCount] = useState(0);
+  const [summariesCount, setSummariesCount] = useState(0);
+  const [tasksCount, setTasksCount] = useState(0);
+
   useEffect(() => {
+    const fetchStats = async () => {
+      try {
+        const [meetingsRes, tasksRes] = await Promise.all([
+          axiosInstance.get('/api/meetings'),
+          axiosInstance.get('/api/tasks')
+        ]);
+        setMeetingsCount(meetingsRes.data.length);
+        setSummariesCount(meetingsRes.data.filter((m: any) => m.summary).length);
+        setTasksCount(tasksRes.data.length);
+      } catch (err) {
+        console.error('Failed to fetch stats:', err);
+      }
+    };
     if (user) {
+      fetchStats();
       setFormData({
         fullName: user.fullName || '',
         email: user.email || '',
@@ -78,10 +96,10 @@ export default function ProfilePage() {
 
       // Update user context
       setUser(response.data.user);
-      
+
       setSuccess('Profile updated successfully!');
       setIsEditing(false);
-      
+
       // Clear password fields
       setFormData({
         ...formData,
@@ -140,9 +158,9 @@ export default function ProfilePage() {
                     </span>
                     {user?.createdAt && (
                       <span className="text-xs text-muted-foreground">
-                        Member since {new Date(user.createdAt).toLocaleDateString('en-US', { 
-                          month: 'long', 
-                          year: 'numeric' 
+                        Member since {new Date(user.createdAt).toLocaleDateString('en-US', {
+                          month: 'long',
+                          year: 'numeric'
                         })}
                       </span>
                     )}
@@ -328,7 +346,7 @@ export default function ProfilePage() {
                   </svg>
                 </div>
                 <div>
-                  <p className="text-2xl font-bold">0</p>
+                  <p className="text-2xl font-bold">{meetingsCount}</p>
                   <p className="text-sm text-muted-foreground">Total Meetings</p>
                 </div>
               </div>
@@ -342,7 +360,7 @@ export default function ProfilePage() {
                   </svg>
                 </div>
                 <div>
-                  <p className="text-2xl font-bold">0</p>
+                  <p className="text-2xl font-bold">{summariesCount}</p>
                   <p className="text-sm text-muted-foreground">AI Summaries</p>
                 </div>
               </div>
@@ -356,7 +374,7 @@ export default function ProfilePage() {
                   </svg>
                 </div>
                 <div>
-                  <p className="text-2xl font-bold">0</p>
+                  <p className="text-2xl font-bold">{tasksCount}</p>
                   <p className="text-sm text-muted-foreground">Tasks Created</p>
                 </div>
               </div>

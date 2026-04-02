@@ -57,7 +57,7 @@ public class MeetingService {
         logger.info("Fetching meetings for user: {} with role: {}", currentUser.getEmail(), currentUser.getRole());
 
         List<Meeting> meetings;
-        
+
         if (currentUser.getRole() == Role.ADMIN) {
             // Admin can see all meetings
             meetings = meetingRepository.findAll();
@@ -81,14 +81,56 @@ public class MeetingService {
                 .orElseThrow(() -> new ResourceNotFoundException("Meeting not found with id: " + id));
 
         // Check authorization: user must own the meeting or be an admin
-        if (!meeting.getCreatedBy().getId().equals(currentUser.getId()) && 
-            currentUser.getRole() != Role.ADMIN) {
-            logger.warn("User {} attempted to access meeting {} without authorization", 
-                       currentUser.getEmail(), id);
+        if (!meeting.getCreatedBy().getId().equals(currentUser.getId()) &&
+                currentUser.getRole() != Role.ADMIN) {
+            logger.warn("User {} attempted to access meeting {} without authorization",
+                    currentUser.getEmail(), id);
             throw new AuthorizationException("You don't have permission to access this meeting");
         }
 
         return mapToResponse(meeting);
+    }
+
+    @Transactional
+    public MeetingResponse updateTranscript(Long meetingId, String transcript, User currentUser) {
+        logger.info("Updating transcript for meeting {} by user: {}", meetingId, currentUser.getEmail());
+
+        Meeting meeting = meetingRepository.findById(meetingId)
+                .orElseThrow(() -> new ResourceNotFoundException("Meeting not found with id: " + meetingId));
+
+        if (!meeting.getCreatedBy().getId().equals(currentUser.getId()) &&
+                currentUser.getRole() != Role.ADMIN) {
+            logger.warn("User {} attempted to update transcript for meeting {} without authorization",
+                    currentUser.getEmail(), meetingId);
+            throw new AuthorizationException("You don't have permission to update this meeting");
+        }
+
+        meeting.setTranscript(transcript);
+        Meeting savedMeeting = meetingRepository.save(meeting);
+
+        return mapToResponse(savedMeeting);
+    }
+
+    @Transactional
+    public void deleteMeeting(Long meetingId, User currentUser) {
+        logger.info("Deleting meeting {} by user: {}", meetingId, currentUser.getEmail());
+
+        Meeting meeting = meetingRepository.findById(meetingId)
+                .orElseThrow(() -> new ResourceNotFoundException("Meeting not found with id: " + meetingId));
+
+        if (!meeting.getCreatedBy().getId().equals(currentUser.getId()) &&
+                currentUser.getRole() != Role.ADMIN) {
+            logger.warn("User {} attempted to delete meeting {} without authorization",
+                    currentUser.getEmail(), meetingId);
+            throw new AuthorizationException("You don't have permission to delete this meeting");
+        }
+
+        // Delete associated tasks first to avoid foreign key constraint violations
+        taskRepository.deleteByMeeting(meeting);
+
+        // Delete the meeting
+        meetingRepository.delete(meeting);
+        logger.info("Meeting {} successfully deleted", meetingId);
     }
 
     @Transactional
@@ -100,10 +142,10 @@ public class MeetingService {
                 .orElseThrow(() -> new ResourceNotFoundException("Meeting not found with id: " + meetingId));
 
         // Check authorization: user must own the meeting or be an admin
-        if (!meeting.getCreatedBy().getId().equals(currentUser.getId()) && 
-            currentUser.getRole() != Role.ADMIN) {
-            logger.warn("User {} attempted to generate summary for meeting {} without authorization", 
-                       currentUser.getEmail(), meetingId);
+        if (!meeting.getCreatedBy().getId().equals(currentUser.getId()) &&
+                currentUser.getRole() != Role.ADMIN) {
+            logger.warn("User {} attempted to generate summary for meeting {} without authorization",
+                    currentUser.getEmail(), meetingId);
             throw new AuthorizationException("You don't have permission to generate summary for this meeting");
         }
 
@@ -124,12 +166,41 @@ public class MeetingService {
         // Build summary text
         StringBuilder summaryBuilder = new StringBuilder();
         summaryBuilder.append("SUMMARY:\n");
-        summaryBuilder.append(geminiResponse.getSummary()).append("\n\n");
-        
+
+        String cleanSummary = geminiResponse.getSummary();
+        if (cleanSummary != null) {
+            // Hotfix: If Gemini nested the entire JSON object inside the summary string,
+            // we try to extract just the summary text from it.
+            if (cleanSummary.contains("\"summary\":")) {
+                try {
+                    // Quick and dirty extraction of just the summary text
+                    int summaryStart = cleanSummary.indexOf("\"summary\":") + 10;
+                    int startQuote = cleanSummary.indexOf("\"", summaryStart);
+                    int endQuote = cleanSummary.indexOf("\"", startQuote + 1);
+
+                    if (startQuote != -1 && endQuote != -1) {
+                        cleanSummary = cleanSummary.substring(startQuote + 1, endQuote);
+                    }
+                } catch (Exception e) {
+                    // If parsing fails, just use the string as is, we'll let the user see it
+                    logger.warn("Failed to extract summary from nested JSON string: {}", e.getMessage());
+                }
+            }
+            // Also clean up any loose braces just in case
+            cleanSummary = cleanSummary.replaceFirst("^\\s*\\{\\s*", "");
+        }
+
+        summaryBuilder.append(cleanSummary).append("\n\n");
+
         if (geminiResponse.getKeyDecisions() != null && !geminiResponse.getKeyDecisions().isEmpty()) {
             summaryBuilder.append("KEY DECISIONS:\n");
             for (String decision : geminiResponse.getKeyDecisions()) {
-                summaryBuilder.append("- ").append(decision).append("\n");
+                // Some models return the JSON structure as text here too, clean strings
+                String cleanDecision = decision.replace("\"", "").trim();
+                if (cleanDecision.endsWith(","))
+                    cleanDecision = cleanDecision.substring(0, cleanDecision.length() - 1);
+
+                summaryBuilder.append("- ").append(cleanDecision).append("\n");
             }
             summaryBuilder.append("\n");
         }
@@ -144,7 +215,7 @@ public class MeetingService {
         // Create tasks from action items
         int tasksCreated = 0;
         List<ActionItem> actionItems = new ArrayList<>();
-        
+
         if (geminiResponse.getActionItems() != null && !geminiResponse.getActionItems().isEmpty()) {
             for (ActionItem actionItem : geminiResponse.getActionItems()) {
                 Task task = Task.builder()
@@ -152,19 +223,19 @@ public class MeetingService {
                         .status(TaskStatus.TODO)
                         .meeting(meeting)
                         .build();
-                
+
                 // Try to find user by owner name if specified
-                if (StringUtils.hasText(actionItem.getOwner()) && 
-                    !actionItem.getOwner().equalsIgnoreCase("Unassigned")) {
+                if (StringUtils.hasText(actionItem.getOwner()) &&
+                        !actionItem.getOwner().equalsIgnoreCase("Unassigned")) {
                     // For now, we'll leave assignedTo as null
                     // In a real system, you might want to match owner names to users
                 }
-                
+
                 taskRepository.save(task);
                 tasksCreated++;
                 actionItems.add(actionItem);
             }
-            
+
             logger.info("Created {} tasks from action items for meeting {}", tasksCreated, meetingId);
         }
 

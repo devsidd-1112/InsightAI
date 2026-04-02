@@ -35,29 +35,12 @@ public class GeminiService {
 
     private static final String PROMPT_TEMPLATE = """
             You are an AI assistant analyzing meeting transcripts.
-            
-            Analyze the following meeting transcript and provide:
-            
-            1. SUMMARY: A concise 2-3 sentence summary of the meeting
-            2. KEY DECISIONS: Bullet points of important decisions made
-            3. ACTION ITEMS: List each action item in the format:
-               - [Action description] | Owner: [name if mentioned, else "Unassigned"] | Deadline: [date if mentioned, else "Not specified"]
-            
+
+            Analyze the following meeting transcript and extract the summary, key decisions, and action items.
+            Return the result strictly as a JSON object.
+
             Transcript:
             %s
-            
-            Respond in the following JSON format:
-            {
-              "summary": "string",
-              "keyDecisions": ["string"],
-              "actionItems": [
-                {
-                  "action": "string",
-                  "owner": "string",
-                  "deadline": "string"
-                }
-              ]
-            }
             """;
 
     public GeminiParsedResponse generateSummary(String transcript) {
@@ -67,6 +50,37 @@ public class GeminiService {
             // Build the prompt
             String prompt = String.format(PROMPT_TEMPLATE, transcript);
 
+            // Define the JSON schema for structured output
+            GeminiRequest.Schema actionItemSchema = GeminiRequest.Schema.builder()
+                    .type("OBJECT")
+                    .properties(java.util.Map.of(
+                            "action",
+                            GeminiRequest.Schema.builder().type("STRING").description("Action description").build(),
+                            "owner",
+                            GeminiRequest.Schema.builder().type("STRING")
+                                    .description("Name if mentioned, else \"Unassigned\"").build(),
+                            "deadline",
+                            GeminiRequest.Schema.builder().type("STRING")
+                                    .description("Date if mentioned, else \"Not specified\"").build()))
+                    .required(java.util.Arrays.asList("action", "owner", "deadline"))
+                    .build();
+
+            GeminiRequest.Schema rootSchema = GeminiRequest.Schema.builder()
+                    .type("OBJECT")
+                    .properties(java.util.Map.of(
+                            "summary",
+                            GeminiRequest.Schema.builder().type("STRING")
+                                    .description("A concise 2-3 sentence summary of the meeting").build(),
+                            "keyDecisions",
+                            GeminiRequest.Schema.builder().type("ARRAY")
+                                    .items(GeminiRequest.Schema.builder().type("STRING").build())
+                                    .description("Bullet points of important decisions made").build(),
+                            "actionItems",
+                            GeminiRequest.Schema.builder().type("ARRAY").items(actionItemSchema)
+                                    .description("List of action items").build()))
+                    .required(java.util.Arrays.asList("summary", "keyDecisions", "actionItems"))
+                    .build();
+
             // Build the request
             GeminiRequest request = GeminiRequest.builder()
                     .contents(Collections.singletonList(
@@ -74,13 +88,13 @@ public class GeminiService {
                                     .parts(Collections.singletonList(
                                             GeminiRequest.Part.builder()
                                                     .text(prompt)
-                                                    .build()
-                                    ))
-                                    .build()
-                    ))
+                                                    .build()))
+                                    .build()))
                     .generationConfig(GeminiRequest.GenerationConfig.builder()
                             .temperature(0.4)
-                            .maxOutputTokens(1024)
+                            .maxOutputTokens(8192)
+                            .responseMimeType("application/json")
+                            .responseSchema(rootSchema)
                             .build())
                     .build();
 
@@ -99,12 +113,11 @@ public class GeminiService {
                     urlWithKey,
                     HttpMethod.POST,
                     entity,
-                    GeminiResponse.class
-            );
+                    GeminiResponse.class);
 
-            if (response.getBody() == null || 
-                response.getBody().getCandidates() == null || 
-                response.getBody().getCandidates().isEmpty()) {
+            if (response.getBody() == null ||
+                    response.getBody().getCandidates() == null ||
+                    response.getBody().getCandidates().isEmpty()) {
                 throw new GeminiApiException("Empty response from Gemini API");
             }
 
@@ -144,25 +157,42 @@ public class GeminiService {
 
     private GeminiParsedResponse parseGeminiResponse(String responseText) {
         try {
-            // Try to extract JSON from the response (it might be wrapped in markdown code blocks)
+            // Try to extract JSON from the response (it might be wrapped in markdown code
+            // blocks)
+            // Try to extract JSON from the response (it might be wrapped in markdown code
+            // blocks)
             String jsonText = responseText.trim();
-            
-            // Remove markdown code blocks if present
+
+            // Strip markdown formatting if present
             if (jsonText.startsWith("```json")) {
                 jsonText = jsonText.substring(7);
             } else if (jsonText.startsWith("```")) {
                 jsonText = jsonText.substring(3);
             }
-            
             if (jsonText.endsWith("```")) {
                 jsonText = jsonText.substring(0, jsonText.length() - 3);
             }
-            
             jsonText = jsonText.trim();
+
+            // Find the opening brace and closing brace to extract just the JSON object
+            int startIndex = jsonText.indexOf('{');
+            int endIndex = jsonText.lastIndexOf('}');
+
+            if (startIndex >= 0 && endIndex > startIndex) {
+                jsonText = jsonText.substring(startIndex, endIndex + 1);
+            } else if (startIndex >= 0 && endIndex <= startIndex) {
+                logger.warn("Truncated JSON response from Gemini API (missing closing brace)");
+                throw new JsonProcessingException(
+                        "Truncated JSON response. The model may have reached its output token limit.") {
+                };
+            } else {
+                throw new JsonProcessingException("No JSON object found in response") {
+                };
+            }
 
             // Parse JSON
             GeminiParsedResponse parsed = objectMapper.readValue(jsonText, GeminiParsedResponse.class);
-            
+
             // Ensure non-null lists
             if (parsed.getKeyDecisions() == null) {
                 parsed.setKeyDecisions(new ArrayList<>());
@@ -170,21 +200,22 @@ public class GeminiService {
             if (parsed.getActionItems() == null) {
                 parsed.setActionItems(new ArrayList<>());
             }
-            
-            logger.info("Successfully parsed Gemini response: {} action items", 
-                       parsed.getActionItems().size());
-            
+
+            logger.info("Successfully parsed Gemini response: {} action items",
+                    parsed.getActionItems().size());
+
             return parsed;
 
         } catch (JsonProcessingException e) {
             logger.error("Failed to parse Gemini response as JSON: {}", responseText, e);
-            
-            // Fallback: create a basic response with the raw text as summary
+
+            // Fallback: create a basic response with the raw text as summary and the error
+            // string for debugging
             GeminiParsedResponse fallback = new GeminiParsedResponse();
-            fallback.setSummary(responseText);
+            fallback.setSummary("DEBUG - JSON Parse Error: " + e.getMessage() + "\n\nRaw Response:\n" + responseText);
             fallback.setKeyDecisions(new ArrayList<>());
             fallback.setActionItems(new ArrayList<>());
-            
+
             return fallback;
         }
     }

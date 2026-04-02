@@ -19,6 +19,13 @@ export default function MeetingDetailPage() {
   const [summaryData, setSummaryData] = useState<SummaryResponse | null>(null);
   const [error, setError] = useState('');
 
+  const [isEditingTranscript, setIsEditingTranscript] = useState(false);
+  const [newTranscript, setNewTranscript] = useState('');
+  const [savingTranscript, setSavingTranscript] = useState(false);
+
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+
   useEffect(() => {
     fetchMeeting();
   }, [meetingId]);
@@ -48,6 +55,40 @@ export default function MeetingDetailPage() {
       setError(err.response?.data?.message || 'Failed to generate summary');
     } finally {
       setGeneratingSummary(false);
+    }
+  };
+
+  const handleDeleteClick = () => {
+    setShowDeleteModal(true);
+  };
+
+  const confirmDelete = async () => {
+    setIsDeleting(true);
+    try {
+      await axiosInstance.delete(`/api/meetings/${meetingId}`);
+      router.push('/meetings');
+    } catch (err: any) {
+      console.error('Error deleting meeting:', err);
+      setError(err.response?.data?.message || 'Failed to delete meeting. Please ensure your backend server has been restarted to apply the latest changes.');
+      setShowDeleteModal(false);
+      setIsDeleting(false);
+    }
+  };
+
+  const handleSaveTranscript = async () => {
+    if (!newTranscript.trim()) return;
+    setSavingTranscript(true);
+    setError('');
+
+    try {
+      await axiosInstance.put(`/api/meetings/${meetingId}/transcript`, { transcript: newTranscript });
+      setIsEditingTranscript(false);
+      setNewTranscript('');
+      await fetchMeeting();
+    } catch (err: any) {
+      setError(err.response?.data?.message || 'Failed to save transcript');
+    } finally {
+      setSavingTranscript(false);
     }
   };
 
@@ -122,7 +163,18 @@ export default function MeetingDetailPage() {
                     </svg>
                   </div>
                   <div className="flex-1 min-w-0">
-                    <h2 className="text-3xl font-bold mb-3">{meeting.title}</h2>
+                    <div className="flex justify-between items-start">
+                      <h2 className="text-3xl font-bold mb-3">{meeting.title}</h2>
+                      <button
+                        onClick={handleDeleteClick}
+                        className="p-2 text-muted-foreground hover:text-white hover:bg-destructive rounded-xl transition-all border border-border hover:border-destructive shadow-sm hover:shadow-destructive/20 ml-4 flex-shrink-0"
+                        title="Delete Meeting"
+                      >
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                        </svg>
+                      </button>
+                    </div>
                     <div className="flex flex-wrap items-center gap-4 text-sm text-muted-foreground">
                       <span className="flex items-center gap-2">
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -159,7 +211,7 @@ export default function MeetingDetailPage() {
                                 relative overflow-hidden">
                   {/* Animated gradient border effect */}
                   <div className="absolute inset-0 bg-gradient-to-r from-green-500/10 via-emerald-500/10 to-green-500/10 opacity-0 hover:opacity-100 transition-opacity duration-500 pointer-events-none"></div>
-                  
+
                   <div className="relative z-10">
                     <div className="flex items-center justify-between mb-6">
                       <div className="flex items-center gap-3">
@@ -247,15 +299,17 @@ export default function MeetingDetailPage() {
               {meeting.transcript ? (
                 <div className="glass rounded-2xl border border-white/20 p-8
                                 hover:shadow-lg transition-all duration-300">
-                  <div className="flex items-center gap-2.5 mb-5">
-                    <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-muted">
-                      <svg className="w-5 h-5 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                      </svg>
-                    </div>
-                    <div>
-                      <h3 className="text-xl font-bold">Raw Transcript</h3>
-                      <p className="text-xs text-muted-foreground">Original meeting recording</p>
+                  <div className="flex items-center justify-between mb-5">
+                    <div className="flex items-center gap-2.5">
+                      <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-muted">
+                        <svg className="w-5 h-5 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                        </svg>
+                      </div>
+                      <div>
+                        <h3 className="text-xl font-bold">Raw Transcript</h3>
+                        <p className="text-xs text-muted-foreground">Original meeting recording</p>
+                      </div>
                     </div>
                   </div>
                   <div className="bg-muted/30 p-6 rounded-xl whitespace-pre-wrap text-sm leading-relaxed 
@@ -265,16 +319,64 @@ export default function MeetingDetailPage() {
                   </div>
                 </div>
               ) : (
-                <div className="glass rounded-2xl border-2 border-yellow-500/30 bg-yellow-50/50 dark:bg-yellow-900/10 p-6">
-                  <div className="flex items-start gap-3">
-                    <svg className="w-5 h-5 text-yellow-600 dark:text-yellow-500 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                    </svg>
+                <div className="glass rounded-2xl border border-white/20 p-8">
+                  <div className="flex items-center gap-2.5 mb-5">
+                    <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-yellow-500/20 text-yellow-600 dark:text-yellow-500">
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                      </svg>
+                    </div>
                     <div>
-                      <p className="text-sm font-medium text-yellow-800 dark:text-yellow-200">No transcript available</p>
-                      <p className="text-sm text-yellow-700 dark:text-yellow-300 mt-1">Add a transcript to generate AI summary and extract action items.</p>
+                      <h3 className="text-xl font-bold">No Transcript</h3>
+                      <p className="text-xs text-muted-foreground">Add transcript to generate AI summary</p>
                     </div>
                   </div>
+
+                  {isEditingTranscript ? (
+                    <div className="space-y-4">
+                      <textarea
+                        value={newTranscript}
+                        onChange={(e) => setNewTranscript(e.target.value)}
+                        placeholder="Paste your meeting transcript here..."
+                        className="w-full h-48 px-4 py-3 bg-background border border-input rounded-xl 
+                                   focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent 
+                                   custom-scrollbar resize-none"
+                      />
+                      <div className="flex items-center gap-3 justify-end">
+                        <button
+                          onClick={() => {
+                            setIsEditingTranscript(false);
+                            setNewTranscript('');
+                          }}
+                          disabled={savingTranscript}
+                          className="px-4 py-2 text-sm font-semibold rounded-lg hover:bg-muted transition-colors disabled:opacity-50"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          onClick={handleSaveTranscript}
+                          disabled={savingTranscript || !newTranscript.trim()}
+                          className="px-6 py-2 ai-gradient text-white text-sm font-semibold rounded-lg 
+                                     hover:shadow-lg active:scale-95 transition-all
+                                     disabled:opacity-50 disabled:active:scale-100 disabled:cursor-not-allowed"
+                        >
+                          {savingTranscript ? 'Saving...' : 'Save Transcript'}
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={() => setIsEditingTranscript(true)}
+                      className="px-6 py-3 border-2 border-dashed border-border rounded-xl w-full
+                                 hover:border-primary/50 hover:bg-primary/5 transition-all
+                                 flex flex-col items-center justify-center gap-2 text-muted-foreground hover:text-foreground"
+                    >
+                      <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                      </svg>
+                      <span className="font-semibold">Add Transcript</span>
+                    </button>
+                  )}
                 </div>
               )}
 
@@ -319,6 +421,58 @@ export default function MeetingDetailPage() {
             </>
           )}
         </div>
+
+        {showDeleteModal && (
+          <div
+            className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-in fade-in duration-200"
+            role="dialog"
+            aria-modal="true"
+          >
+            <div className="glass rounded-2xl border border-white/20 p-8 max-w-md w-full shadow-2xl animate-in zoom-in-95 duration-200">
+              <div className="flex items-center justify-center mb-6">
+                <div className="flex h-16 w-16 items-center justify-center rounded-full bg-destructive/10 text-destructive mb-2">
+                  <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                  </svg>
+                </div>
+              </div>
+
+              <h2 className="text-2xl font-bold text-center mb-3">Delete Meeting?</h2>
+              <p className="text-muted-foreground text-center mb-8 leading-relaxed">
+                Are you sure you want to delete this meeting? This action will permanently remove the meeting, its transcript, summary, and all associated action items. This cannot be undone.
+              </p>
+
+              <div className="flex gap-4">
+                <button
+                  onClick={() => setShowDeleteModal(false)}
+                  disabled={isDeleting}
+                  className="flex-1 px-6 py-3 border-2 border-border rounded-xl 
+                             hover:bg-accent active:scale-[0.98] disabled:opacity-50
+                             transition-all duration-200 font-semibold"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={confirmDelete}
+                  disabled={isDeleting}
+                  className="flex-1 px-6 py-3 bg-destructive text-destructive-foreground rounded-xl 
+                             hover:shadow-lg hover:shadow-destructive/20 hover:scale-[1.02] active:scale-[0.98]
+                             disabled:opacity-50 disabled:hover:scale-100 disabled:cursor-not-allowed
+                             transition-all duration-200 font-semibold inline-flex items-center justify-center"
+                >
+                  {isDeleting ? (
+                    <span className="flex items-center justify-center gap-2">
+                      <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white/80"></div>
+                      Deleting...
+                    </span>
+                  ) : (
+                    'Delete'
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </AppLayout>
     </ProtectedRoute>
   );

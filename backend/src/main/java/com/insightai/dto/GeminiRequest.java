@@ -12,10 +12,10 @@ import java.util.List;
 @AllArgsConstructor
 @Builder
 public class GeminiRequest {
-    
+
     private List<Content> contents;
     private GenerationConfig generationConfig;
-    
+
     @Data
     @NoArgsConstructor
     @AllArgsConstructor
@@ -23,7 +23,7 @@ public class GeminiRequest {
     public static class Content {
         private List<Part> parts;
     }
-    
+
     @Data
     @NoArgsConstructor
     @AllArgsConstructor
@@ -31,7 +31,7 @@ public class GeminiRequest {
     public static class Part {
         private String text;
     }
-    
+
     @Data
     @NoArgsConstructor
     @AllArgsConstructor
@@ -39,5 +39,19 @@ public class GeminiRequest {
     public static class GenerationConfig {
         private Double temperature;
         private Integer maxOutputTokens;
+        private String responseMimeType;
+        private Schema responseSchema;
+    }
+
+    @Data
+    @NoArgsConstructor
+    @AllArgsConstructor
+    @Builder
+    public static class Schema {
+        private String type;
+        private String description;
+        private java.util.Map<String, Schema> properties;
+        private Schema items;
+        private java.util.List<String> required;
     }
 }
